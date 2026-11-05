@@ -1,0 +1,133 @@
+name: VoiceStudio TTS
+
+# Generates a voiceover with VoiceStudio (free, local, open-source ElevenLabs
+# alternative) on a GitHub Actions runner, then uploads the audio as an artifact.
+#
+# SETUP (once):
+#   1. Create a GitHub repo (PUBLIC = free unlimited minutes, 4 CPU / 16 GB RAM.
+#      Private = 2 CPU / 8 GB RAM, 2,000 free min/month.)
+#   2. Copy this file to .github/workflows/voicestudio-tts.yml
+#      Copy scripts/generate.py to scripts/generate.py
+#   3. Add your files:
+#        script.txt        - the full narration text (plain text)
+#        voice/ref.wav     - 3-10 sec CLEAN reference clip, single speaker,
+#                            mono, 24 kHz (ffmpeg: -ac 1 -ar 24000)
+#        voice/ref.txt     - the exact words spoken in ref.wav
+#   4. Actions tab -> "VoiceStudio TTS" -> Run workflow -> download artifact.
+#
+# NOTES:
+#   - First run downloads the OmniVoice model (~2.4 GB) from HuggingFace;
+#     it is cached, so later runs are much faster.
+#   - Disk on the runner is only 14 GB, so we build from source (uv sync),
+#     NOT the Docker image (needs ~25 GB).
+#   - No API key needed: loopback calls to 127.0.0.1:3900 need no auth.
+#   - Default engine "omnivoice" is CC-BY-NC (non-commercial). For monetized
+#     videos, switch MODEL to a permissive engine, e.g. cosyvoice3 (Apache-2.0).
+#     See the workflow env MODEL below.
+
+on:
+  workflow_dispatch:
+    inputs:
+      profile_name:
+        description: "Voice profile name"
+        required: false
+        default: "narrator"
+      output_name:
+        description: "Output file name (without extension)"
+        required: false
+        default: "voiceover"
+
+jobs:
+  tts:
+    runs-on: ubuntu-latest
+    timeout-minutes: 300 # hard cap is 6h per job
+
+    steps:
+      - name: Check out this repo (script + voice clip)
+        uses: actions/checkout@v4
+
+      - name: Check out VoiceStudio
+        uses: actions/checkout@v4
+        with:
+          repository: debpalash/VoiceStudio
+          path: VoiceStudio
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Cache models + venv (so later runs skip the big downloads)
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/huggingface
+            ~/.cache/uv
+            VoiceStudio/.venv
+          key: voicestudio-${{ runner.os }}-${{ hashFiles('VoiceStudio/uv.lock') }}
+          restore-keys: |
+            voicestudio-${{ runner.os }}-
+
+      - name: Install backend dependencies
+        working-directory: VoiceStudio
+        run: uv sync
+
+      - name: Start VoiceStudio backend
+        working-directory: VoiceStudio
+        run: |
+          nohup bash scripts/start-backend.sh > /tmp/backend.log 2>&1 &
+          for i in $(seq 1 60); do
+            if curl -sf http://127.0.0.1:3900/health > /dev/null; then
+              echo "backend up"
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "backend did not start:"; tail -50 /tmp/backend.log; exit 1
+
+      - name: Decode voice reference clip
+        # ref.wav is stored base64-encoded in 7 parts (voice/ref.wav.b64.part-*)
+        # because the upload path cannot carry large single arguments.
+        run: cat voice/ref.wav.b64.part-* | base64 -d > voice/ref.wav
+
+      - name: Create voice profile from reference clip
+        id: profile
+        run: |
+          python3 - << 'EOF'
+          import json, os, subprocess
+          ref_text = open("voice/ref.txt").read().strip()
+          r = subprocess.run([
+              "curl", "-s", "-X", "POST", "http://127.0.0.1:3900/profiles",
+              "-F", "name=${{ inputs.profile_name }}",
+              "-F", "ref_audio=@voice/ref.wav",
+              "-F", f"ref_text={ref_text}",
+              "-F", "language=English",
+          ], capture_output=True, text=True)
+          print(r.stdout)
+          data = json.loads(r.stdout)
+          pid = data["id"]
+          print(f"profile_id={pid}")
+          with open(os.environ["GITHUB_OUTPUT"], "a") as f:
+              f.write(f"profile_id={pid}\n")
+          EOF
+
+      - name: Generate speech (chunked, then joined)
+        env:
+          PROFILE_ID: ${{ steps.profile.outputs.profile_id }}
+          MODEL: omnivoice
+        run: python3 scripts/generate.py script.txt "out/${{ inputs.output_name }}.wav"
+
+      - name: Convert to MP3
+        run: |
+          ffmpeg -y -i "out/${{ inputs.output_name }}.wav" \
+            -codec:a libmp3lame -b:a 128k "out/${{ inputs.output_name }}.mp3"
+
+      - name: Upload voiceover
+        uses: actions/upload-artifact@v4
+        with:
+          name: voiceover
+          path: out/
+          retention-days: 30
