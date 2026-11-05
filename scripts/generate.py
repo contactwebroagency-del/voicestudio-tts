@@ -84,6 +84,14 @@ def main():
     ]
     print(f"synthesized {len(files)} chunks")
 
+    if len(files) == 1:
+        # Single chunk: no join needed, just copy it to the output.
+        import shutil
+
+        shutil.copyfile(files[0], out_path)
+        print("wrote", out_path)
+        return
+
     with open("out/concat.txt", "w") as f:
         for p in files:
             f.write(f"file '{os.path.abspath(p)}'\n")
