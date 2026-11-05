@@ -55,8 +55,13 @@ def synth(text, idx, outdir):
         data=payload,
         headers={"Content-Type": "application/json"},
     )
-    with urllib.request.urlopen(req, timeout=900) as resp:
-        audio = resp.read()
+    try:
+        with urllib.request.urlopen(req, timeout=900) as resp:
+            audio = resp.read()
+    except urllib.error.HTTPError as e:
+        print(f"speech request failed: {e.code} {e.reason}")
+        print(e.read().decode(errors="replace"))
+        raise
     path = os.path.join(outdir, f"chunk_{idx:03d}.wav")
     with open(path, "wb") as f:
         f.write(audio)
