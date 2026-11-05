@@ -36,6 +36,10 @@ on:
         description: "Output file name (without extension)"
         required: false
         default: "voiceover"
+      script_file:
+        description: "Script file in the repo to read aloud"
+        required: false
+        default: "script.txt"
 
 jobs:
   tts:
@@ -78,9 +82,12 @@ jobs:
       - name: Start VoiceStudio backend
         working-directory: VoiceStudio
         run: |
-          nohup bash scripts/start-backend.sh > /tmp/backend.log 2>&1 &
-          for i in $(seq 1 60); do
-            if curl -sf http://127.0.0.1:3900/health > /dev/null; then
+          # The repo has no scripts/start-backend.sh; the launcher
+          # (scripts/run.sh) starts it as: uv run uvicorn main:app
+          # --app-dir backend --host 127.0.0.1 --port 3900
+          nohup uv run uvicorn main:app --app-dir backend --host 127.0.0.1 --port 3900 > /tmp/backend.log 2>&1 &
+          for i in $(seq 1 120); do
+            if curl -sf http://127.0.0.1:3900/system/info > /dev/null; then
               echo "backend up"
               exit 0
             fi
@@ -118,7 +125,7 @@ jobs:
         env:
           PROFILE_ID: ${{ steps.profile.outputs.profile_id }}
           MODEL: omnivoice
-        run: python3 scripts/generate.py script.txt "out/${{ inputs.output_name }}.wav"
+        run: python3 scripts/generate.py "${{ inputs.script_file }}" "out/${{ inputs.output_name }}.wav"
 
       - name: Convert to MP3
         run: |
