@@ -140,6 +140,9 @@ jobs:
               f.write(f"profile_id={pid}\n")
           EOF
 
+      - name: Install ffmpeg (join chunks + MP3)
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg
+
       - name: Generate speech (chunked, then joined)
         env:
           PROFILE_ID: ${{ steps.profile.outputs.profile_id }}
