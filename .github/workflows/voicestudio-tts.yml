@@ -95,19 +95,24 @@ jobs:
           done
           echo "backend did not start:"; tail -50 /tmp/backend.log; exit 1
 
-      - name: Accept OmniVoice model licence (test only)
-        # The OmniVoice model is CC-BY-NC: the backend refuses to generate
-        # until its licence is accepted (POST /v1/audio/speech -> 403).
+      - name: Accept OmniVoice model licences (test only)
+        # The OmniVoice engine loads TWO gated models: the weights
+        # (k2-fsa/OmniVoice) and the audio tokenizer
+        # (eustlb/higgs-audio-v2-tokenizer). The backend refuses to generate
+        # until BOTH licences are accepted (POST /v1/audio/speech -> 403).
         # This acceptance is for TESTING the voice clone only. Audio made
         # with OmniVoice must NOT be used in monetized videos; for that,
         # switch MODEL to the Apache-2.0 cosyvoice engine instead.
         run: |
-          FP=$(curl -s http://127.0.0.1:3900/models/licenses/details/k2-fsa/OmniVoice \
-            | python3 -c "import json,sys; print(json.load(sys.stdin)['acceptance']['fingerprint'])")
-          echo "fingerprint: $FP"
-          curl -s -X POST http://127.0.0.1:3900/models/licenses/accept \
-            -H "Content-Type: application/json" \
-            -d "{\"repo_id\": \"k2-fsa/OmniVoice\", \"fingerprint\": \"$FP\", \"accepted\": true}"
+          for REPO in k2-fsa/OmniVoice eustlb/higgs-audio-v2-tokenizer; do
+            FP=$(curl -s "http://127.0.0.1:3900/models/licenses/details/$REPO" \
+              | python3 -c "import json,sys; print(json.load(sys.stdin)['acceptance']['fingerprint'])")
+            echo "$REPO fingerprint: $FP"
+            curl -s -X POST http://127.0.0.1:3900/models/licenses/accept \
+              -H "Content-Type: application/json" \
+              -d "{\"repo_id\": \"$REPO\", \"fingerprint\": \"$FP\", \"accepted\": true}"
+            echo ""
+          done
 
       - name: Decode voice reference clip
         # ref.wav is stored base64-encoded in 7 parts (voice/ref.wav.b64.part-*)
