@@ -95,6 +95,20 @@ jobs:
           done
           echo "backend did not start:"; tail -50 /tmp/backend.log; exit 1
 
+      - name: Accept OmniVoice model licence (test only)
+        # The OmniVoice model is CC-BY-NC: the backend refuses to generate
+        # until its licence is accepted (POST /v1/audio/speech -> 403).
+        # This acceptance is for TESTING the voice clone only. Audio made
+        # with OmniVoice must NOT be used in monetized videos; for that,
+        # switch MODEL to the Apache-2.0 cosyvoice engine instead.
+        run: |
+          FP=$(curl -s http://127.0.0.1:3900/models/licenses/details/k2-fsa/OmniVoice \
+            | python3 -c "import json,sys; print(json.load(sys.stdin)['acceptance']['fingerprint'])")
+          echo "fingerprint: $FP"
+          curl -s -X POST http://127.0.0.1:3900/models/licenses/accept \
+            -H "Content-Type: application/json" \
+            -d "{\"repo_id\": \"k2-fsa/OmniVoice\", \"fingerprint\": \"$FP\", \"accepted\": true}"
+
       - name: Decode voice reference clip
         # ref.wav is stored base64-encoded in 7 parts (voice/ref.wav.b64.part-*)
         # because the upload path cannot carry large single arguments.
